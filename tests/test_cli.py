@@ -102,7 +102,7 @@ class TestMain:
         )
         processed: list[Path] = []
 
-        def _fake_process(input_path, cfg, args):
+        def _fake_process(input_path, cfg, args, server_holder=None):
             processed.append(input_path)
             return input_path.with_name("notes.md")
 
@@ -126,7 +126,7 @@ class TestMain:
         )
         seen: dict = {}
 
-        def _fake_process(input_path, cfg, args):
+        def _fake_process(input_path, cfg, args, server_holder=None):
             seen["flat"] = args.flat
             return input_path.with_name("lec.md")
 
@@ -139,7 +139,7 @@ class TestMain:
         (tmp_path / "b.mkv").write_bytes(b"x")
         processed: list[str] = []
 
-        def _fake_process(input_path, cfg, args):
+        def _fake_process(input_path, cfg, args, server_holder=None):
             processed.append(input_path.name)
             return input_path.with_name("notes.md")
 
@@ -153,7 +153,7 @@ class TestMain:
         (tmp_path / "b.mp4").write_bytes(b"x")
         processed: list[str] = []
 
-        def _fake_process(input_path, cfg, args):
+        def _fake_process(input_path, cfg, args, server_holder=None):
             processed.append(input_path.name)
             if input_path.name == "a.mp4":
                 raise RuntimeError("boom")
@@ -188,3 +188,65 @@ class TestMain:
         code = main([str(tmp_path)])
         assert code == 2
         assert "медиафайлов" in capsys.readouterr().err
+
+
+class TestBatchServerLifetime:
+    """Сервер vLLM на весь запуск: один старт на пакет файлов, один останов."""
+
+    def _realtime_config(self, tmp_path: Path) -> Path:
+        config = tmp_path / "config.yaml"
+        config.write_text(
+            "providers:\n"
+            "  prov-a: {base_url: https://api.example.test/v1, api_key_env: TEST_KEY_A}\n"
+            "  vllm-voxtral: {base_url: http://127.0.0.1:12435, api_key_env: '', gpu: '1'}\n"
+            "stt:\n"
+            "  rt: {backend: voxtral-realtime, provider: vllm-voxtral, model: realtime-model,\n"
+            "       chunk_seconds: 120, default: true}\n"
+            "vision:\n  vis-a: {provider: prov-a, default: true}\n"
+            "llm:\n  llm-a: {provider: prov-a, default: true}\n",
+            encoding="utf-8",
+        )
+        return config
+
+    def test_server_started_once_for_batch(self, tmp_path: Path,
+                                          monkeypatch: pytest.MonkeyPatch) -> None:
+        import absorbent.pipeline as pipeline_module
+        import absorbent.realtime as realtime_module
+
+        media = tmp_path / "media"
+        media.mkdir()
+        for name in ("a.mp3", "b.mp3"):
+            (media / name).write_bytes(b"audio")
+        proc = object()
+        events: list[str] = []
+
+        def _ensure(provider, model, chunk_seconds, *, proc_holder):
+            events.append("ensure")
+            proc_holder.append(proc)
+
+        monkeypatch.setattr(realtime_module, "ensure_server", _ensure)
+        monkeypatch.setattr(realtime_module, "stop_server",
+                            lambda stopped: events.append(f"stop:{stopped is proc}"))
+        monkeypatch.setattr(pipeline_module, "run_stt",
+                            lambda *args, **kwargs: events.append("stt") or None)
+
+        code = main([str(media), "--config", str(self._realtime_config(tmp_path)),
+                     "--flat", "--skip-frames", "--skip-describe", "--skip-synthesize",
+                     "--skip-render"])
+        assert code == 0
+        # Один старт сервера на два файла и одна остановка в конце.
+        assert events == ["ensure", "stt", "stt", "stop:True"]
+
+    def test_no_server_without_realtime_backend(self, tmp_path: Path,
+                                                monkeypatch: pytest.MonkeyPatch) -> None:
+        import absorbent.realtime as realtime_module
+
+        (tmp_path / "a.mp4").write_bytes(b"x")
+
+        def _boom(*args, **kwargs):  # pragma: no cover - не должен вызываться.
+            raise AssertionError("для whisper сервер vLLM не нужен")
+
+        monkeypatch.setattr(realtime_module, "ensure_server", _boom)
+        monkeypatch.setattr(realtime_module, "stop_server", _boom)
+        assert main([str(tmp_path / "a.mp4"), "--skip-stt", "--skip-frames",
+                     "--skip-describe", "--skip-synthesize", "--skip-render"]) == 0

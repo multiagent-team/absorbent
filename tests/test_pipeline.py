@@ -396,3 +396,23 @@ class TestServerLifecycle:
         monkeypatch.setattr(realtime_module, "ensure_server", _boom)
         monkeypatch.setattr(realtime_module, "stop_server", _boom)
         process_file(_input(tmp_path), cfg, args_namespace)
+
+    def test_borrowed_holder_leaves_server_to_caller(self, tmp_path: Path, fake_stages: dict,
+                                                    args_namespace,
+                                                    monkeypatch: pytest.MonkeyPatch) -> None:
+        """Пакетный прогон: сервером распоряжается вызывающий, pipeline его не трогает."""
+        import absorbent.realtime as realtime_module
+
+        cfg = load_config(str(self._realtime_config(tmp_path)))
+        events: list = []
+
+        def _boom(*args, **kwargs):  # pragma: no cover - не должен вызываться.
+            raise AssertionError("сервером владеет вызывающий")
+
+        monkeypatch.setattr(realtime_module, "ensure_server", _boom)
+        monkeypatch.setattr(realtime_module, "stop_server", _boom)
+        holder: list = [object()]
+        for name in ("a.mp3", "b.mp3"):
+            process_file(_input(tmp_path, name), cfg, args_namespace, server_holder=holder)
+        assert events == []
+        assert len(holder) == 1

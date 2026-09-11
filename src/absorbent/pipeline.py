@@ -27,7 +27,8 @@ def _load_json(path: Path) -> list | dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def process_file(input_path: Path, cfg: Config, args: argparse.Namespace) -> Path:
+def process_file(input_path: Path, cfg: Config, args: argparse.Namespace,
+                 server_holder: list | None = None) -> Path:
     """Прогнать все этапы конвейера для одного файла; вернуть путь конспекта.
 
     Раскладка по умолчанию: каталог <имя>/ рядом с входом, внутри notes.md,
@@ -46,6 +47,11 @@ def process_file(input_path: Path, cfg: Config, args: argparse.Namespace) -> Pat
     (`--output-language`) — независимые оси: первый лишь подсказывает whisper
     (для двуязычных лекций всегда 'auto'), второй явно задаёт язык промптов
     описания и синтеза (по умолчанию 'ru').
+
+    server_holder — список живых серверов vLLM, общий на весь прогон: если он
+    передан (пакетная обработка через cli.main), сервером распоряжается
+    вызывающий — pipeline его не поднимает и не гасит; без него процесс файла
+    сам управляет сервером (старт перед STT, остановка в finally).
     """
     stem = input_path.stem
     flat = getattr(args, "flat", False)
@@ -89,15 +95,15 @@ def process_file(input_path: Path, cfg: Config, args: argparse.Namespace) -> Pat
         print(f"[{stem}] кадров нет (аудио без видеопотока)")
 
     print(f"[{stem}] распознавание речи...")
-    # Локальный сервер vLLM поднимается на время прогона и гасится в finally:
-    # список живых процессов заполняет ensure_server.
-    server: list = []
+    # Локальный сервер vLLM: в одиночном режиме его поднимает и гасит этот
+    # вызов, в пакетном (server_holder от cli.main) — сам вызывающий.
+    own_holder: list = []
     try:
         if not args.skip_stt:
             stt_provider, stt_spec = cfg.resolve("stt", args.stt)
-            if stt_spec.backend == "voxtral-realtime":
+            if server_holder is None and stt_spec.backend == "voxtral-realtime":
                 realtime.ensure_server(stt_provider, stt_spec.api_model, stt_spec.chunk_seconds,
-                                       proc_holder=server)
+                                       proc_holder=own_holder)
             run_stt(stt_spec, stt_provider, input_path, args.language, transcript_path, cache,
                     force=args.force)
         transcript = _load_json(transcript_path)
@@ -133,7 +139,7 @@ def process_file(input_path: Path, cfg: Config, args: argparse.Namespace) -> Pat
                 render_all(notes_path)
                 print(f"[{stem}] готово: {notes_path} (+ notes.html, notes.pdf)")
     finally:
-        if server:
+        if server_holder is None and own_holder:
             print(f"[{stem}] остановка сервера vLLM...")
-            realtime.stop_server(server[0])
+            realtime.stop_server(own_holder[0])
     return notes_path

@@ -102,15 +102,29 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     # Импорт внутри функции: позволяет --help работать без полного конвейера.
+    from absorbent import realtime
     from absorbent.pipeline import process_file
 
+    # Локальный сервер vLLM поднимается на весь запуск, а не на каждый файл:
+    # пакет из десятков лекций иначе платил бы за старт сервера каждый раз.
+    server_holder: list = []
     exit_code = 0
-    for input_path in inputs:
-        try:
-            process_file(input_path, cfg, args)
-        except Exception as exc:  # ошибка этапа не должна ронять обработку остальных файлов.
-            print(f"ошибка обработки {input_path}: {exc}", file=sys.stderr)
-            exit_code = 1
+    try:
+        if not args.skip_stt:
+            stt_provider, stt_spec = cfg.resolve("stt", args.stt)
+            if stt_spec.backend == "voxtral-realtime":
+                realtime.ensure_server(stt_provider, stt_spec.api_model, stt_spec.chunk_seconds,
+                                       proc_holder=server_holder)
+        for input_path in inputs:
+            try:
+                process_file(input_path, cfg, args, server_holder=server_holder)
+            except Exception as exc:  # ошибка этапа не должна ронять обработку остальных файлов.
+                print(f"ошибка обработки {input_path}: {exc}", file=sys.stderr)
+                exit_code = 1
+    finally:
+        if server_holder:
+            print("остановка сервера vLLM...")
+            realtime.stop_server(server_holder[0])
     return exit_code
 
 
