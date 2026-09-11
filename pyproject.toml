@@ -15,6 +15,7 @@ dependencies = [
     # httpx не умеет SOCKS-прокси без этого пакета, а окружение пользователя
     # ходит в API через ALL_PROXY=socks5://127.0.0.1:1080.
     "socksio",
+    "websockets>=17.1",
 ]
 
 [project.scripts]

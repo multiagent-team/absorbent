@@ -8,6 +8,12 @@ providers:
   mistral:
     base_url: https://api.mistral.ai/v1
     api_key_env: MISTRAL_API_KEY
+  vllm-voxtral:            # локальный vLLM с Voxtral Realtime (поднимает absorbent)
+    base_url: http://127.0.0.1:12435
+    api_key_env: ""        # локальный сервер: без Authorization
+    vllm_bin: ~/.local/bin/vllm
+    gpu: "1"               # CUDA_VISIBLE_DEVICES: 1 = RTX 3090
+    autostart: true        # поднять сервер, если порт закрыт
 
 stt:
   whisper-turbo:
@@ -18,6 +24,11 @@ stt:
     backend: voxtral
     provider: mistral
     model: voxtral-mini-latest
+  voxtral-realtime:        # локальные веса Voxtral Realtime через vLLM
+    backend: voxtral-realtime
+    provider: vllm-voxtral
+    model: mistralai/Voxtral-Mini-4B-Realtime-2602
+    chunk_seconds: 300     # длина фрагмента нарезки по паузам
 
 vision:
   deepseek-v4-flash-vision-exp:

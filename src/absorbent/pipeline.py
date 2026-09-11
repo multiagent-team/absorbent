@@ -6,6 +6,7 @@ import argparse
 import json
 from pathlib import Path
 
+from absorbent import realtime
 from absorbent.config import Config
 from absorbent.dedup import dedup_frames
 from absorbent.describe import describe_keyframes
@@ -55,7 +56,7 @@ def process_file(input_path: Path, cfg: Config, args: argparse.Namespace) -> Pat
     else:
         output_dir = input_path.with_name(stem)
     if flat:
-        cache = input_path.parent / ".absorbent" / stem
+        cache = realtime.flat_cache_dir(input_path.parent, stem)
         notes_path = output_dir / f"{stem}.md"
         transcript_path = output_dir / f"{stem}.json"
         images_dir = output_dir / f"{stem}.images"
@@ -88,40 +89,51 @@ def process_file(input_path: Path, cfg: Config, args: argparse.Namespace) -> Pat
         print(f"[{stem}] кадров нет (аудио без видеопотока)")
 
     print(f"[{stem}] распознавание речи...")
-    if not args.skip_stt:
-        stt_provider, stt_spec = cfg.resolve("stt", args.stt)
-        run_stt(stt_spec, stt_provider, input_path, args.language, transcript_path, cache,
-                force=args.force)
-    transcript = _load_json(transcript_path)
+    # Локальный сервер vLLM поднимается на время прогона и гасится в finally:
+    # список живых процессов заполняет ensure_server.
+    server: list = []
+    try:
+        if not args.skip_stt:
+            stt_provider, stt_spec = cfg.resolve("stt", args.stt)
+            if stt_spec.backend == "voxtral-realtime":
+                realtime.ensure_server(stt_provider, stt_spec.api_model, stt_spec.chunk_seconds,
+                                       proc_holder=server)
+            run_stt(stt_spec, stt_provider, input_path, args.language, transcript_path, cache,
+                    force=args.force)
+        transcript = _load_json(transcript_path)
 
-    descriptions: dict = {}
-    if not args.skip_describe:
-        print(f"[{stem}] описание {len(keyframes)} ключевых кадров...")
-        if keyframes:
-            vision_provider, vision_spec = cfg.resolve("vision", args.vision_model)
-            descriptions = describe_keyframes(vision_spec, vision_provider, keyframes, transcript,
-                                              images_dir, output_language, descriptions_path,
-                                              force=args.force)
-        else:
-            descriptions = _load_json(descriptions_path)
-            if isinstance(descriptions, list):
-                descriptions = {}
-    elif descriptions_path.exists():
-        loaded = _load_json(descriptions_path)
-        descriptions = loaded if isinstance(loaded, dict) else {}
+        descriptions: dict = {}
+        if not args.skip_describe:
+            print(f"[{stem}] описание {len(keyframes)} ключевых кадров...")
+            if keyframes:
+                vision_provider, vision_spec = cfg.resolve("vision", args.vision_model)
+                descriptions = describe_keyframes(vision_spec, vision_provider, keyframes,
+                                                  transcript, images_dir, output_language,
+                                                  descriptions_path, force=args.force)
+            else:
+                descriptions = _load_json(descriptions_path)
+                if isinstance(descriptions, list):
+                    descriptions = {}
+        elif descriptions_path.exists():
+            loaded = _load_json(descriptions_path)
+            descriptions = loaded if isinstance(loaded, dict) else {}
 
-    if not args.skip_synthesize:
-        print(f"[{stem}] синтез Markdown...")
-        llm_provider, llm_spec = cfg.resolve("llm", args.llm_model)
-        run_synthesize(llm_spec, llm_provider, transcript, descriptions, output_language,
-                       notes_path, images_prefix=images_prefix)
+        if not args.skip_synthesize:
+            print(f"[{stem}] синтез Markdown...")
+            llm_provider, llm_spec = cfg.resolve("llm", args.llm_model)
+            run_synthesize(llm_spec, llm_provider, transcript, descriptions, output_language,
+                           notes_path, images_prefix=images_prefix)
 
-    if not getattr(args, "skip_render", False) and notes_path.exists():
-        print(f"[{stem}] постпроцессинг: таблицы, HTML, PDF...")
-        if flat:
-            render_all(notes_path, output_dir / f"{stem}.html", output_dir / f"{stem}.pdf")
-            print(f"[{stem}] готово: {notes_path}")
-        else:
-            render_all(notes_path)
-            print(f"[{stem}] готово: {notes_path} (+ notes.html, notes.pdf)")
+        if not getattr(args, "skip_render", False) and notes_path.exists():
+            print(f"[{stem}] постпроцессинг: таблицы, HTML, PDF...")
+            if flat:
+                render_all(notes_path, output_dir / f"{stem}.html", output_dir / f"{stem}.pdf")
+                print(f"[{stem}] готово: {notes_path}")
+            else:
+                render_all(notes_path)
+                print(f"[{stem}] готово: {notes_path} (+ notes.html, notes.pdf)")
+    finally:
+        if server:
+            print(f"[{stem}] остановка сервера vLLM...")
+            realtime.stop_server(server[0])
     return notes_path

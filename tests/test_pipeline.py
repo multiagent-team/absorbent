@@ -318,3 +318,81 @@ class TestFlatMode:
         assert fake_stages["calls"] == ["stt:auto", "synthesize:ru:0", "render"]
         assert "кадров нет (аудио без видеопотока)" in capsys.readouterr().out
         assert notes.exists()
+
+
+class TestServerLifecycle:
+    """Локальный сервер vLLM: поднимается до STT и гасится в finally."""
+
+    def _realtime_config(self, tmp_path: Path) -> Path:
+        config = tmp_path / "config.yaml"
+        config.write_text(
+            "providers:\n"
+            "  prov-a: {base_url: https://api.example.test/v1, api_key_env: TEST_KEY_A}\n"
+            "  vllm-voxtral: {base_url: http://127.0.0.1:12435, api_key_env: '', gpu: '1'}\n"
+            "stt:\n"
+            "  rt: {backend: voxtral-realtime, provider: vllm-voxtral, model: realtime-model,\n"
+            "       chunk_seconds: 120, default: true}\n"
+            "vision:\n  vis-a: {provider: prov-a, default: true}\n"
+            "llm:\n  llm-a: {provider: prov-a, default: true}\n",
+            encoding="utf-8",
+        )
+        return config
+
+    def test_started_before_stt_and_stopped_after_render(self, tmp_path: Path, fake_stages: dict,
+                                                        args_namespace,
+                                                        monkeypatch: pytest.MonkeyPatch) -> None:
+        import absorbent.realtime as realtime_module
+
+        cfg = load_config(str(self._realtime_config(tmp_path)))
+        proc = object()
+        recorded: list = []
+
+        def _ensure(provider, model, chunk_seconds, *, proc_holder):
+            recorded.append(("ensure", provider.name, model, chunk_seconds))
+            fake_stages["calls"].append("ensure_server")
+            proc_holder.append(proc)
+
+        def _stop(stopped):
+            recorded.append(("stop", stopped))
+            fake_stages["calls"].append("stop_server")
+
+        monkeypatch.setattr(realtime_module, "ensure_server", _ensure)
+        monkeypatch.setattr(realtime_module, "stop_server", _stop)
+        process_file(_input(tmp_path, "lecture.mp3"), cfg, args_namespace)
+        assert recorded == [("ensure", "vllm-voxtral", "realtime-model", 120.0), ("stop", proc)]
+        assert fake_stages["calls"] == ["extract", "dedup:10", "ensure_server", "stt:auto",
+                                        "describe:ru:1", "synthesize:ru:1", "render",
+                                        "stop_server"]
+
+    def test_stopped_even_if_stage_fails(self, tmp_path: Path, fake_stages: dict, args_namespace,
+                                         monkeypatch: pytest.MonkeyPatch) -> None:
+        import absorbent.pipeline as pipeline_module
+        import absorbent.realtime as realtime_module
+
+        cfg = load_config(str(self._realtime_config(tmp_path)))
+        proc = object()
+        stopped: list = []
+        monkeypatch.setattr(realtime_module, "ensure_server",
+                            lambda provider, model, chunk_seconds, *, proc_holder:
+                            proc_holder.append(proc))
+        monkeypatch.setattr(realtime_module, "stop_server", lambda p: stopped.append(p))
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("синтез упал")
+
+        monkeypatch.setattr(pipeline_module, "run_synthesize", _boom)
+        with pytest.raises(RuntimeError, match="синтез упал"):
+            process_file(_input(tmp_path, "lecture.mp3"), cfg, args_namespace)
+        assert stopped == [proc]
+
+    def test_whisper_backend_never_starts_server(self, tmp_path: Path, cfg, fake_stages: dict,
+                                                 args_namespace,
+                                                 monkeypatch: pytest.MonkeyPatch) -> None:
+        import absorbent.realtime as realtime_module
+
+        def _boom(*args, **kwargs):  # pragma: no cover - не должен вызываться.
+            raise AssertionError("для whisper сервер vLLM не нужен")
+
+        monkeypatch.setattr(realtime_module, "ensure_server", _boom)
+        monkeypatch.setattr(realtime_module, "stop_server", _boom)
+        process_file(_input(tmp_path), cfg, args_namespace)

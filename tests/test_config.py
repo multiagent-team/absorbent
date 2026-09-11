@@ -20,12 +20,23 @@ class TestLoadConfig:
         cfg = load_config(str(sample_config))
         assert isinstance(cfg, Config)
         # Провайдеры из штатного файла.
-        assert set(cfg.providers) == {"deepseek", "llama-swap", "mistral"}
+        assert set(cfg.providers) == {"deepseek", "llama-swap", "mistral", "vllm-voxtral"}
         assert cfg.providers["deepseek"].base_url == "https://api.deepseek.com"
         assert cfg.providers["deepseek"].api_key_env == "DEEPSEEK_API_KEY"
         assert cfg.providers["llama-swap"].api_key_env == ""
+        # Провайдер локального vLLM: путь к бинарю (с раскрытой тильдой), GPU,
+        # автозапуск; у остальных провайдеров эти поля дефолтные.
+        vllm = cfg.providers["vllm-voxtral"]
+        assert vllm.base_url == "http://127.0.0.1:12435"
+        assert vllm.api_key_env == ""
+        assert vllm.vllm_bin == str(Path.home() / ".local" / "bin" / "vllm")
+        assert vllm.gpu == "1"
+        assert vllm.autostart is True
+        assert cfg.providers["mistral"].vllm_bin == ""
+        assert cfg.providers["mistral"].gpu == ""
+        assert cfg.providers["mistral"].autostart is True
         # Категории моделей.
-        assert set(cfg.stt) == {"whisper-turbo", "voxtral-transcribe-2"}
+        assert set(cfg.stt) == {"whisper-turbo", "voxtral-transcribe-2", "voxtral-realtime"}
         assert cfg.stt["whisper-turbo"].backend == "whisper"
         assert cfg.stt["whisper-turbo"].whisper_model == "turbo"
         assert cfg.stt["whisper-turbo"].default is True
@@ -33,6 +44,10 @@ class TestLoadConfig:
         assert cfg.stt["voxtral-transcribe-2"].provider == "mistral"
         assert cfg.stt["voxtral-transcribe-2"].model == "voxtral-mini-latest"
         assert cfg.stt["voxtral-transcribe-2"].api_model == "voxtral-mini-latest"
+        assert cfg.stt["voxtral-realtime"].backend == "voxtral-realtime"
+        assert cfg.stt["voxtral-realtime"].provider == "vllm-voxtral"
+        assert cfg.stt["voxtral-realtime"].model == "mistralai/Voxtral-Mini-4B-Realtime-2602"
+        assert cfg.stt["voxtral-realtime"].chunk_seconds == 300.0
         assert cfg.vision["deepseek-v4-flash-vision-exp"].default is True
         assert cfg.llm["deepseek-v4-flash"].default is True
         assert not cfg.llm["deepseek-v4-pro"].default
@@ -86,6 +101,71 @@ class TestLoadConfig:
         # Штатный порядок поиска: явный файл в cwd, затем ~/.config/absorbent.
         assert CONFIG_CANDIDATES[0] == "./config.yaml"
         assert CONFIG_CANDIDATES[1] == "~/.config/absorbent/config.yaml"
+
+
+class TestChunkSeconds:
+    def test_explicit_value(self, tmp_path: Path) -> None:
+        path = tmp_path / "config.yaml"
+        path.write_text(
+            "stt:\n  rt: {backend: voxtral-realtime, chunk_seconds: 45.5, default: true}\n",
+            encoding="utf-8",
+        )
+        cfg = load_config(str(path))
+        assert cfg.stt["rt"].chunk_seconds == 45.5
+
+    def test_default_is_300(self) -> None:
+        cfg = _repo_cfg()
+        assert cfg.stt["whisper-turbo"].chunk_seconds == 300.0
+
+    def test_non_positive_rejected(self, tmp_path: Path) -> None:
+        path = tmp_path / "config.yaml"
+        path.write_text("stt:\n  rt: {backend: voxtral-realtime, chunk_seconds: 0}\n",
+                        encoding="utf-8")
+        with pytest.raises(ConfigError, match="chunk_seconds должен быть положительным"):
+            load_config(str(path))
+
+    def test_negative_rejected(self, tmp_path: Path) -> None:
+        path = tmp_path / "config.yaml"
+        path.write_text("stt:\n  rt: {chunk_seconds: -1}\n", encoding="utf-8")
+        with pytest.raises(ConfigError, match="'rt' в категории 'stt'"):
+            load_config(str(path))
+
+
+class TestLocalServerProvider:
+    def test_defaults_without_local_fields(self, minimal_config: Path) -> None:
+        cfg = load_config(str(minimal_config))
+        provider = cfg.providers["prov-a"]
+        assert provider.vllm_bin == ""
+        assert provider.gpu == ""
+        assert provider.autostart is True
+
+    def test_explicit_local_fields(self, tmp_path: Path) -> None:
+        path = tmp_path / "config.yaml"
+        path.write_text(
+            "providers:\n"
+            "  local:\n"
+            "    base_url: http://127.0.0.1:12435\n"
+            "    api_key_env: ''\n"
+            "    vllm_bin: ~/bin/vllm\n"
+            "    gpu: '0'\n"
+            "    autostart: false\n",
+            encoding="utf-8",
+        )
+        provider = load_config(str(path)).providers["local"]
+        assert provider.vllm_bin == str(Path.home() / "bin" / "vllm")
+        assert provider.gpu == "0"
+        assert provider.autostart is False
+
+    def test_empty_local_fields(self, tmp_path: Path) -> None:
+        """Пустые значения (null или '') не превращаются в строку 'None'."""
+        path = tmp_path / "config.yaml"
+        path.write_text(
+            "providers:\n  local: {base_url: u, vllm_bin: null, gpu: ''}\n",
+            encoding="utf-8",
+        )
+        provider = load_config(str(path)).providers["local"]
+        assert provider.vllm_bin == ""
+        assert provider.gpu == ""
 
 
 class TestResolve:

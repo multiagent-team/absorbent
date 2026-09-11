@@ -1,4 +1,4 @@
-"""Распознавание речи: whisper (локально) и voxtral (Mistral API)."""
+"""Распознавание речи: whisper (локально), voxtral (Mistral API), voxtral-realtime."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import json
 import subprocess
 from pathlib import Path
 
+from absorbent import realtime
 from absorbent.config import ModelSpec, Provider, api_key_from
 
 # Канонический промежуточный формат — transcript.json:
@@ -126,6 +127,64 @@ def _voxtral_transcribe(spec: ModelSpec, provider: Provider, input_path: Path, l
     return segments, detected
 
 
+def _transcribe_fragment_with_retry(pcm: bytes, ws_url: str, model: str, timeout: float,
+                                    start: float, end: float) -> str:
+    """Распознать фрагмент; при ошибке — одна повторная попытка."""
+    try:
+        return realtime.transcribe_chunk(pcm, ws_url, model, timeout)
+    except realtime.RealtimeError as exc:
+        print(f"повтор фрагмента {start:.1f}–{end:.1f}: {exc}")
+        return realtime.transcribe_chunk(pcm, ws_url, model, timeout)
+
+
+def _voxtral_realtime_transcribe(spec: ModelSpec, provider: Provider, input_path: Path,
+                                 language: str, work_dir: Path,
+                                 force: bool) -> tuple[list[dict], str | None]:
+    """Локальная транскрипция Voxtral Realtime через vLLM: фрагменты по паузам.
+
+    Протокол /v1/realtime не отдаёт ни таймкодов, ни спикеров, поэтому текст
+    раскладывается по фрагментам, нарезанным по паузам (границы фрагментов и
+    становятся start/end сегментов). Сервер к этому моменту уже поднят
+    вызывающим (pipeline.process_file), поэтому здесь только обмен.
+
+    Ошибка фрагмента не роняет прогон: фрагмент пропускается, а в конце
+    печатается число неудач. Ошибка первого фрагмента пробрасывается —
+    это признак мёртвого сервера.
+    """
+    pcm_path = work_dir / "audio.s16le"
+    duration = realtime.extract_pcm(input_path, pcm_path, force)
+    silences = realtime.find_silences(pcm_path, work_dir / "silences.json", force)
+    cuts = realtime.chunk_boundaries(duration, silences, spec.chunk_seconds)
+    chunk_count = len(cuts) + 1
+    print(f"длительность {duration:.1f} с, фрагментов {chunk_count}")
+    if language in ("ru", "en"):
+        print("backend voxtral-realtime не принимает подсказку языка, модель определяет его сама")
+
+    ws_url = realtime.realtime_ws_url(provider.base_url)
+    timeout = spec.chunk_seconds * realtime.CHUNK_TIMEOUT_FACTOR + 300
+    pcm = pcm_path.read_bytes()
+    texts: list[str] = []
+    failed = 0
+    for index in range(chunk_count):
+        start = cuts[index - 1] if index else 0.0
+        end = cuts[index] if index < len(cuts) else duration
+        print(f"[{index + 1}/{chunk_count}] {start:.1f}–{end:.1f} с")
+        block = pcm[int(start * realtime.PCM_BYTES_PER_SECOND):
+                    int(end * realtime.PCM_BYTES_PER_SECOND)]
+        try:
+            texts.append(_transcribe_fragment_with_retry(block, ws_url, spec.api_model,
+                                                         timeout, start, end))
+        except realtime.RealtimeError as exc:
+            if index == 0:
+                raise  # Первый фрагмент: сервер, скорее всего, умер — не глотаем.
+            print(f"ошибка фрагмента {start:.1f}–{end:.1f}: {exc}")
+            failed += 1
+            texts.append("")
+    if failed:
+        print(f"внимание: {failed} фрагмент(ов) не распознаны")
+    return realtime.segments_from_chunks(duration, cuts, texts), None
+
+
 def run_stt(spec: ModelSpec, provider: Provider, input_path: Path, language: str, out_json: Path,
             work_dir: Path, force: bool = False) -> str | None:
     """Запустить распознавание речи; вернуть обнаруженный язык ("ru"/"en"/None).
@@ -150,6 +209,9 @@ def run_stt(spec: ModelSpec, provider: Provider, input_path: Path, language: str
     elif spec.backend == "voxtral":
         audio_path = work_dir / "audio.wav"
         segments, detected = _voxtral_transcribe(spec, provider, input_path, language, audio_path)
+    elif spec.backend == "voxtral-realtime":
+        segments, detected = _voxtral_realtime_transcribe(spec, provider, input_path, language,
+                                                          work_dir, force)
     else:
         raise STTError(f"неизвестный backend распознавания: '{spec.backend}'")
 

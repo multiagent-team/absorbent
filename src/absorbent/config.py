@@ -21,11 +21,19 @@ class ConfigError(Exception):
 
 @dataclass
 class Provider:
-    """Провайдер OpenAI-совместимого API."""
+    """Провайдер OpenAI-совместимого API.
+
+    Поля локального сервера (vllm_bin, gpu, autostart) используются только
+    провайдерами, которые Absorbent поднимает сам (vLLM для Voxtral
+    Realtime); у остальных они остаются дефолтными.
+    """
 
     name: str
     base_url: str
     api_key_env: str = ""
+    vllm_bin: str = ""
+    gpu: str = ""
+    autostart: bool = True
 
 
 @dataclass
@@ -38,6 +46,7 @@ class ModelSpec:
     whisper_model: str = ""
     model: str = ""
     default: bool = False
+    chunk_seconds: float = 300.0
 
     @property
     def api_model(self) -> str:
@@ -91,6 +100,11 @@ def _parse_model_table(raw: dict, category: str) -> dict[str, ModelSpec]:
     for name, body in raw.items():
         if not isinstance(body, dict):
             raise ConfigError(f"модель '{name}' в категории '{category}' должна быть словарём")
+        chunk_seconds = float(body.get("chunk_seconds", 300.0))
+        if chunk_seconds <= 0:
+            raise ConfigError(
+                f"у модели '{name}' в категории '{category}' chunk_seconds должен быть положительным"
+            )
         table[name] = ModelSpec(
             name=name,
             provider=str(body.get("provider", "")),
@@ -98,6 +112,7 @@ def _parse_model_table(raw: dict, category: str) -> dict[str, ModelSpec]:
             whisper_model=str(body.get("whisper_model", "")),
             model=str(body.get("model", "")),
             default=bool(body.get("default", False)),
+            chunk_seconds=chunk_seconds,
         )
     return table
 
@@ -132,6 +147,10 @@ def load_config(path: str | None) -> Config:
             name=name,
             base_url=str(body.get("base_url", "")),
             api_key_env=str(body.get("api_key_env", "")),
+            # Тильду раскрываем здесь: значение уходит в argv для Popen.
+            vllm_bin=str(body.get("vllm_bin", "") or "").replace("~", str(Path.home())),
+            gpu=str(body.get("gpu", "") or ""),
+            autostart=bool(body.get("autostart", True)),
         )
 
     return Config(

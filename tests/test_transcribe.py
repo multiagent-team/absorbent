@@ -260,3 +260,152 @@ class TestAudioHelpers:
         monkeypatch.setattr(subprocess, "run", _ok)
         transcribe_module._extract_audio(tmp_path / "in.mp4", tmp_path / "audio.wav")
         assert (tmp_path / "audio.wav").read_bytes() == b"wav"
+
+
+REALTIME_MODEL = "mistralai/Voxtral-Mini-4B-Realtime-2602"
+
+
+def _realtime_spec(chunk_seconds: float = 300.0) -> ModelSpec:
+    return ModelSpec(name="voxtral-realtime", backend="voxtral-realtime", provider="vllm-voxtral",
+                     model=REALTIME_MODEL, chunk_seconds=chunk_seconds)
+
+
+@pytest.fixture
+def fake_realtime(monkeypatch: pytest.MonkeyPatch) -> dict:
+    """Подменяет этапы absorbent.realtime: нарезка и WS-обмен под контролем теста.
+
+    state["script"] — очередь ответов transcribe_chunk: строка или исключение
+    (исключение поднимается вместо ответа), по одному на вызов.
+    """
+    import absorbent.realtime as realtime_module
+
+    state: dict = {"script": [], "chunks": [], "calls": [], "duration": 600.0, "silences": []}
+
+    def _extract_pcm(input_path, pcm_path, force=False):
+        state["calls"].append(("extract_pcm", input_path, pcm_path, force))
+        pcm_path.parent.mkdir(parents=True, exist_ok=True)
+        size = int(state["duration"] * realtime_module.PCM_BYTES_PER_SECOND)
+        pcm_path.write_bytes(b"\0" * size)
+        return state["duration"]
+
+    def _find_silences(pcm_path, cache_path, force=False):
+        state["calls"].append(("find_silences", pcm_path, cache_path, force))
+        return state["silences"]
+
+    def _transcribe_chunk(pcm, ws_url, model, timeout):
+        state["chunks"].append({"size": len(pcm), "url": ws_url, "model": model,
+                                "timeout": timeout})
+        item = state["script"].pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    monkeypatch.setattr(realtime_module, "extract_pcm", _extract_pcm)
+    monkeypatch.setattr(realtime_module, "find_silences", _find_silences)
+    monkeypatch.setattr(realtime_module, "transcribe_chunk", _transcribe_chunk)
+    return state
+
+
+class TestVoxtralRealtimeBackend:
+    def _run(self, tmp_path: Path, fake_realtime: dict, language: str = "auto",
+             chunk_seconds: float = 300.0, force: bool = False) -> Path:
+        out = tmp_path / "lecture.json"
+        run_stt(_realtime_spec(chunk_seconds), Provider(name="vllm-voxtral",
+                                                        base_url="http://127.0.0.1:12435"),
+                tmp_path / "lecture.wav", language, out, tmp_path, force=force)
+        return out
+
+    def test_fragments_become_segments(self, tmp_path: Path, fake_realtime: dict,
+                                       capsys: pytest.CaptureFixture) -> None:
+        """Пауза на 290 с режет часовую запись на три фрагмента."""
+        fake_realtime["silences"] = [290.0]
+        fake_realtime["script"] = ["первый фрагмент", "второй", ""]
+        out = self._run(tmp_path, fake_realtime)
+        assert json.loads(out.read_text(encoding="utf-8")) == [
+            {"start": 0.0, "end": 290.0, "text": "первый фрагмент", "speaker": None},
+            {"start": 290.0, "end": 590.0, "text": "второй", "speaker": None},
+        ]
+        # Пустой текст (третий фрагмент) сегмента не даёт, язык не детектирован.
+        assert not (tmp_path / "language.txt").exists()
+        # Размеры блоков равны длительности фрагментов в байтах PCM.
+        assert [chunk["size"] for chunk in fake_realtime["chunks"]] == [290 * 32000,
+                                                                       300 * 32000,
+                                                                       10 * 32000]
+        # Адрес и модель уходят в протокол, таймаут растёт от chunk_seconds.
+        assert fake_realtime["chunks"][0]["url"] == "ws://127.0.0.1:12435/v1/realtime"
+        assert fake_realtime["chunks"][0]["model"] == REALTIME_MODEL
+        assert fake_realtime["chunks"][0]["timeout"] == 300.0 * 4 + 300
+        printed = capsys.readouterr().out
+        assert "длительность 600.0 с, фрагментов 3" in printed
+        assert "[1/3] 0.0–290.0 с" in printed
+        assert "[3/3] 590.0–600.0 с" in printed
+
+    def test_work_dir_keeps_service_files(self, tmp_path: Path, fake_realtime: dict) -> None:
+        fake_realtime["script"] = ["первый", "второй"]
+        self._run(tmp_path, fake_realtime)
+        calls = dict((name, (a, b, c)) for name, a, b, c in fake_realtime["calls"])
+        assert calls["extract_pcm"] == (tmp_path / "lecture.wav",
+                                        tmp_path / "audio.s16le", False)
+        assert calls["find_silences"] == (tmp_path / "audio.s16le",
+                                          tmp_path / "silences.json", False)
+
+    def test_force_is_forwarded(self, tmp_path: Path, fake_realtime: dict) -> None:
+        fake_realtime["script"] = ["первый", "второй"]
+        self._run(tmp_path, fake_realtime, force=True)
+        assert [call[3] for call in fake_realtime["calls"]] == [True, True]
+
+    def test_retry_after_transient_error(self, tmp_path: Path, fake_realtime: dict,
+                                        capsys: pytest.CaptureFixture) -> None:
+        import absorbent.realtime as realtime_module
+
+        fake_realtime["script"] = [realtime_module.RealtimeError("обрыв"), "текст", "второй"]
+        out = self._run(tmp_path, fake_realtime)
+        assert json.loads(out.read_text(encoding="utf-8"))[0]["text"] == "текст"
+        assert "повтор фрагмента 0.0–300.0" in capsys.readouterr().out
+
+    def test_failed_fragment_is_skipped(self, tmp_path: Path, fake_realtime: dict,
+                                        capsys: pytest.CaptureFixture) -> None:
+        import absorbent.realtime as realtime_module
+
+        # Два фрагмента (рез на 300 с), второй не распознан обеими попытками.
+        fake_realtime["script"] = ["первый", realtime_module.RealtimeError("нет связи"),
+                                   realtime_module.RealtimeError("нет связи")]
+        out = self._run(tmp_path, fake_realtime, chunk_seconds=300.0, force=True)
+        assert json.loads(out.read_text(encoding="utf-8")) == [
+            {"start": 0.0, "end": 300.0, "text": "первый", "speaker": None},
+        ]
+        printed = capsys.readouterr().out
+        assert "ошибка фрагмента 300.0–600.0: нет связи" in printed
+        assert "внимание: 1 фрагмент(ов) не распознаны" in printed
+
+    def test_first_fragment_failure_propagates(self, tmp_path: Path, fake_realtime: dict) -> None:
+        import absorbent.realtime as realtime_module
+
+        fake_realtime["script"] = [realtime_module.RealtimeError("сервер мёртв"),
+                                   realtime_module.RealtimeError("сервер мёртв")]
+        with pytest.raises(realtime_module.RealtimeError, match="сервер мёртв"):
+            self._run(tmp_path, fake_realtime, chunk_seconds=600.0)
+
+    def test_language_hint_warning_once(self, tmp_path: Path, fake_realtime: dict,
+                                        capsys: pytest.CaptureFixture) -> None:
+        fake_realtime["silences"] = [290.0]
+        fake_realtime["script"] = ["а", "б", "в"]
+        self._run(tmp_path, fake_realtime, language="ru")
+        printed = capsys.readouterr().out
+        assert printed.count("не принимает подсказку языка") == 1
+        # Детектированного языка нет: протокол его не отдаёт.
+        assert not (tmp_path / "language.txt").exists()
+
+    def test_auto_language_prints_nothing(self, tmp_path: Path, fake_realtime: dict,
+                                          capsys: pytest.CaptureFixture) -> None:
+        fake_realtime["silences"] = [290.0]
+        fake_realtime["script"] = ["а", "б", "в"]
+        self._run(tmp_path, fake_realtime, language="auto")
+        assert "подсказку языка" not in capsys.readouterr().out
+
+    def test_unknown_ws_scheme_raises(self, tmp_path: Path, fake_realtime: dict) -> None:
+        fake_realtime["script"] = ["текст"]
+        out = tmp_path / "lecture.json"
+        with pytest.raises(Exception, match="неизвестная схема"):
+            run_stt(_realtime_spec(), Provider(name="vllm-voxtral", base_url="localhost:12435"),
+                    tmp_path / "lecture.wav", "auto", out, tmp_path)
