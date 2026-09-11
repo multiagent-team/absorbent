@@ -133,13 +133,18 @@ def start_server(base_url: str, model: str, vllm_bin: str, gpu: str,
     log_path = vllm_log_path()
     log_path.parent.mkdir(parents=True, exist_ok=True)
     cmd = [binary, "serve", model, "--host", host, "--port", str(parts.port),
-           "--enforce-eager", "--max-model-len", str(max_model_len(chunk_seconds)),
+           "--compilation_config", '{"cudagraph_mode": "PIECEWISE"}',
+           "--max-model-len", str(max_model_len(chunk_seconds)),
            "--gpu-memory-utilization", "0.85"]
     env = dict(os.environ)
     # Порядок CUDA-устройств фиксируется PCI-шиной: иначе CUDA сортирует GPU
     # по скорости и значение ключа "gpu" указывало бы на другую карту, чем в
     # nvidia-smi (у разных GPU быстрый порядок не совпадает с PCI).
     env["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+    # Режим запуска — из карточки модели: cudagraphs PIECEWISE вместо
+    # --enforce-eager дают ~25% скорости на том же аудио, а кэш компиляции
+    # отключается, чтобы vLLM не подхватил устаревшие графы.
+    env["VLLM_DISABLE_COMPILE_CACHE"] = "1"
     if gpu:
         env["CUDA_VISIBLE_DEVICES"] = gpu
     print(f"запуск сервера vLLM: {' '.join(cmd)}")

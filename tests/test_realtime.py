@@ -188,7 +188,8 @@ class TestStartServer:
         proc = realtime.start_server("http://127.0.0.1:12435", REAL_MODEL, "vllm", "1", 300.0)
         assert proc is seen["proc"]
         assert seen["cmd"] == ["/usr/bin/vllm", "serve", REAL_MODEL, "--host", "127.0.0.1",
-                               "--port", "12435", "--enforce-eager",
+                               "--port", "12435", "--compilation_config",
+                               '{"cudagraph_mode": "PIECEWISE"}',
                                "--max-model-len", "5798", "--gpu-memory-utilization", "0.85"]
         assert seen["kwargs"]["start_new_session"] is True
         assert seen["kwargs"]["stderr"] is subprocess.STDOUT
@@ -196,6 +197,8 @@ class TestStartServer:
         # порядок устройств CUDA фиксируется PCI-шиной.
         assert seen["kwargs"]["env"]["CUDA_VISIBLE_DEVICES"] == "1"
         assert seen["kwargs"]["env"]["CUDA_DEVICE_ORDER"] == "PCI_BUS_ID"
+        # Кэш компиляции отключается: иначе vLLM подхватывает устаревшие графы.
+        assert seen["kwargs"]["env"]["VLLM_DISABLE_COMPILE_CACHE"] == "1"
         assert (tmp_path / "vllm.log").exists()
 
     def test_binary_as_file_path(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
