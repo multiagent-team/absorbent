@@ -135,7 +135,13 @@ def start_server(base_url: str, model: str, vllm_bin: str, gpu: str,
     cmd = [binary, "serve", model, "--host", host, "--port", str(parts.port),
            "--enforce-eager", "--max-model-len", str(max_model_len(chunk_seconds)),
            "--gpu-memory-utilization", "0.85"]
-    env = {**os.environ, "CUDA_VISIBLE_DEVICES": gpu} if gpu else dict(os.environ)
+    env = dict(os.environ)
+    # Порядок CUDA-устройств фиксируется PCI-шиной: иначе CUDA сортирует GPU
+    # по скорости и значение ключа "gpu" указывало бы на другую карту, чем в
+    # nvidia-smi (у разных GPU быстрый порядок не совпадает с PCI).
+    env["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+    if gpu:
+        env["CUDA_VISIBLE_DEVICES"] = gpu
     print(f"запуск сервера vLLM: {' '.join(cmd)}")
     print(f"лог сервера: {log_path}")
     with open(log_path, "w", encoding="utf-8") as log:

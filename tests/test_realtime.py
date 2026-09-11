@@ -192,7 +192,10 @@ class TestStartServer:
                                "--max-model-len", "5798", "--gpu-memory-utilization", "0.85"]
         assert seen["kwargs"]["start_new_session"] is True
         assert seen["kwargs"]["stderr"] is subprocess.STDOUT
+        # Номер GPU из конфига указывает на ту же карту, что и в nvidia-smi:
+        # порядок устройств CUDA фиксируется PCI-шиной.
         assert seen["kwargs"]["env"]["CUDA_VISIBLE_DEVICES"] == "1"
+        assert seen["kwargs"]["env"]["CUDA_DEVICE_ORDER"] == "PCI_BUS_ID"
         assert (tmp_path / "vllm.log").exists()
 
     def test_binary_as_file_path(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -203,8 +206,10 @@ class TestStartServer:
         realtime.start_server("http://127.0.0.1:12435", REAL_MODEL, str(binary), "", 60.0)
         assert seen["cmd"][0] == str(binary)
         assert seen["cmd"][seen["cmd"].index("--max-model-len") + 1] == "4096"
-        # gpu пуст -> CUDA_VISIBLE_DEVICES не подменяется.
+        # gpu пуст -> CUDA_VISIBLE_DEVICES не подменяется (карту выбирает сам
+        # vLLM), но порядок устройств всё равно фиксируется PCI-шиной.
         assert "CUDA_VISIBLE_DEVICES" not in seen["kwargs"]["env"]
+        assert seen["kwargs"]["env"]["CUDA_DEVICE_ORDER"] == "PCI_BUS_ID"
 
     def test_binary_from_path_lookup(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         seen = self._capture(monkeypatch, tmp_path, "", "/usr/bin/vllm")
