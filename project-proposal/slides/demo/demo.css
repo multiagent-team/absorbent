@@ -1,0 +1,7 @@
+html { color-scheme: light; background: #eef2f5; }
+body { max-width: 940px; margin: 32px auto; padding: 40px; background: white; color: #172b3a; font-family: system-ui, sans-serif; line-height: 1.5; }
+h1 { color: #13394b; } a, strong { color: #087f8c; }
+#demo-excerpt { box-sizing: border-box; width: 760px; max-width: 100%; padding: 24px 30px; margin: 24px auto; border: 1px solid #d8e4e9; border-radius: 12px; font-size: 22px; line-height: 1.45; }
+#demo-excerpt p { margin: 0 0 16px; } math[display="block"] { margin: 16px 0; overflow-x: auto; }
+figure { margin: 28px auto; max-width: 760px; } img { width: 100%; height: auto; } figcaption, .provenance { font-size: 16px; color: #51636b; }
+@media (max-width: 820px) { body { margin: 0; padding: 20px; } }

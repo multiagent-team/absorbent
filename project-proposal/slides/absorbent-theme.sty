@@ -1,0 +1,86 @@
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{absorbent-theme}[2026/10/22 Absorbent proposal]
+
+\RequirePackage{fontspec}
+\RequirePackage{tikz}
+\RequirePackage{graphicx}
+\RequirePackage{qrcode}
+\usetikzlibrary{arrows.meta,calc}
+\setsansfont{Noto Sans}
+\setmainfont{Noto Sans}
+\setmonofont{Noto Sans Mono}[Scale=MatchLowercase]
+\usefonttheme{professionalfonts}
+
+% Палитра отделяет действующий продукт от направлений развития.
+\definecolor{navy}{HTML}{122C38}
+\definecolor{teal}{HTML}{087F8C}
+\definecolor{mint}{HTML}{99E3CC}
+\definecolor{paper}{HTML}{F6F7F3}
+\definecolor{slate}{HTML}{51636B}
+\definecolor{linegray}{HTML}{D8E0DD}
+\definecolor{palegreen}{HTML}{E5F1EB}
+\definecolor{orange}{HTML}{B96336}
+\definecolor{paleblue}{HTML}{E8F1F3}
+\definecolor{darkpanel}{HTML}{1B3B47}
+\definecolor{darkmuted}{HTML}{B3C6CC}
+
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{headline}{}
+\setbeamertemplate{footline}{}
+\setbeamertemplate{background canvas}{}
+\setbeamersize{text margin left=8mm,text margin right=8mm}
+\setbeamerfont{normal text}{size=\fontsize{10}{13}\selectfont}
+\setbeamercolor{normal text}{fg=navy,bg=paper}
+\hypersetup{colorlinks=true,urlcolor=teal,linkcolor=teal}
+
+% Абсолютные координаты задаются в миллиметрах от верхнего левого угла.
+\newcommand{\at}[4]{%
+  \node[anchor=north west,inner sep=0pt,outer sep=0pt,
+        text width=#3mm,align=left,text=ink,
+        font=\fontsize{10}{13}\selectfont]
+    at ([xshift=#1mm,yshift=-#2mm]current page.north west) {#4};%
+}
+\newcommand{\lightpalette}{%
+  \colorlet{ink}{navy}\colorlet{quiet}{slate}\colorlet{surface}{paper}%
+  \colorlet{panel}{white}\colorlet{border}{linegray}\colorlet{accent}{teal}%
+}
+\newcommand{\darkpalette}{%
+  \colorlet{ink}{white}\colorlet{quiet}{darkmuted}\colorlet{surface}{navy}%
+  \colorlet{panel}{darkpanel}\colorlet{border}{darkpanel}\colorlet{accent}{mint}%
+}
+\newcommand{\smalllabel}[1]{{\fontsize{6.5}{8}\selectfont\bfseries\color{quiet}#1}}
+\newcommand{\heading}[1]{\at{8}{17}{142}{{\fontsize{21}{24}\selectfont\bfseries #1}}}
+\newcommand{\subheading}[1]{\at{8}{29}{140}{{\fontsize{9}{12}\selectfont\color{quiet}#1}}}
+
+\newenvironment{slidecanvas}[3]{%
+  \begin{tikzpicture}[remember picture,overlay]
+    \fill[surface] (current page.north west) rectangle (current page.south east);
+    \at{8}{6.5}{130}{{\fontsize{6.5}{8}\selectfont\bfseries\color{accent}#1}}
+    \node[anchor=north east,inner sep=0pt]
+      at ([xshift=-8mm,yshift=-5mm]current page.north east)
+      {\includegraphics[width=5.5mm]{assets/hse-logo.png}};
+    \at{8}{82}{125}{{\fontsize{6}{7.5}\selectfont\color{quiet}ABSORBENT\enspace /\enspace MULTI-AGENT SYSTEMS}}
+    \at{140}{82}{12}{{\fontsize{6}{7.5}\selectfont\color{quiet}#2}}
+    \draw[border,line width=.35mm]
+      ([xshift=8mm,yshift=-87mm]current page.north west) --
+      ([xshift=152mm,yshift=-87mm]current page.north west);
+    \ifnum#3>0\relax
+      \pgfmathsetmacro{\progresswidth}{8+144*#3/8}
+      \draw[accent,line width=.65mm]
+        ([xshift=8mm,yshift=-87mm]current page.north west) --
+        ([xshift=\progresswidth mm,yshift=-87mm]current page.north west);
+    \fi
+}{\end{tikzpicture}}
+
+% Карточки и стрелки используют ту же систему координат, что и текст.
+\newcommand{\card}[5]{%
+  \fill[#5,rounded corners=1.8mm]
+    ([xshift=#1mm,yshift=-#2mm]current page.north west)
+    rectangle ++(#3mm,-#4mm);%
+}
+\newcommand{\flowarrow}[4]{%
+  \draw[-{Stealth[length=1.7mm,width=1.4mm]},teal,line width=.5mm]
+    ([xshift=#1mm,yshift=-#2mm]current page.north west) --
+    ([xshift=#3mm,yshift=-#4mm]current page.north west);%
+}
+
