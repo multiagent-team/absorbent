@@ -26,7 +26,7 @@
 ## Версионирование
 
 - **Источник истины — `version` в `pyproject.toml`.** Формат — SemVer
-  (`MAJOR.MINOR.PATCH`); текущий номер `0.1.0`.
+  (`MAJOR.MINOR.PATCH`); текущий номер `0.4.1`.
 - **Релиз отмечается аннотированным git-тегом `vX.Y.Z`**, совпадающим с
   `version`. Тег ставится на коммит, из которого собраны артефакты.
   Опубликованный тег не переставляется и не переписывается: ошибку исправляет
@@ -42,7 +42,7 @@
     `keyframes.json`) или раскладка каталога результатов;
   - пока версия `0.x`, несовместимое изменение помечается `MINOR`, но никогда
     не `PATCH`.
-- **Docker-теги повторяют версию:** `0.1.0` и `latest` указывают на один
+- **Docker-теги повторяют версию:** `0.4.1` и `latest` указывают на один
   образ. `latest` — удобство, а не гарантия стабильности; воспроизводимость
   даёт версионный тег или дайджест.
 - **Сведения о сборке несут метки OCI образа**:
@@ -59,16 +59,17 @@
 
 ## Публикация выпуска
 
-Пакета в PyPI нет: канал доставки — GitHub Releases, а образ в Docker Hub
-публикует workflow `Docker` при пуше тега `v*` в удалённый `github`. Выпуск
-проводит агент целиком, от человека нужно только решение о содержании выпуска.
+Пакета в PyPI нет: канал доставки — GitHub Releases, а образ в GitHub
+Container Registry (`ghcr.io/multiagent-team/absorbent`) публикует workflow
+`Docker` при пуше тега `v*` в `origin`. Выпуск проводит агент целиком, от
+человека нужно только решение о содержании выпуска.
 
 - Номер версии меняется отдельным коммитом (`pyproject.toml` и `uv.lock`
   вместе — lock тоже хранит версию проекта), на этот коммит ставится
   аннотированный тег `vX.Y.Z`.
-- Тег отправляется в оба удалённых репозитория (`gitlab` и `github`): пуш в
-  `github` запускает сборку образа, проверить её — `gh run list --repo
-  ivan-mikhnovich/absorbent --limit 3`.
+- Тег отправляется в единственный remote `origin`
+  (`git push origin vX.Y.Z`): это запускает сборку образа, проверить её —
+  `gh run list --repo multiagent-team/absorbent --limit 3`.
 - К тегу прикладывается релиз с артефактами `dist/`: без него не работает
   команда развёртывания Absorbobot, которая скачивает wheel из
   `…/releases/download/vX.Y.Z/`:
@@ -76,7 +77,7 @@
   ```bash
   uv build
   gh release create vX.Y.Z dist/absorbent-X.Y.Z-py3-none-any.whl \
-    dist/absorbent-X.Y.Z.tar.gz --repo ivan-mikhnovich/absorbent \
+    dist/absorbent-X.Y.Z.tar.gz --repo multiagent-team/absorbent \
     --title X.Y.Z --notes-file <файл с описанием>
   ```
 
