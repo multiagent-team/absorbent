@@ -9,3 +9,9 @@ build/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Локальные ключи API: в репозиторий идёт только пример `.env.example`.
+.env
+
+# Записи и результаты прогонов через docker compose.
+data/

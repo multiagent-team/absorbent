@@ -1,7 +1,8 @@
 # Запуск Absorbent в контейнере. Подготовка:
+#   cp .env.example .env   # вписать ключи API
 #   mkdir -p data
 #   cp <запись> data/
-#   DEEPSEEK_API_KEY=... docker compose run --rm absorbent data/<запись>
+#   docker compose run --rm absorbent data/<запись>
 #
 # Если GPU не нужен, уберите блок `deploy` — образ работает и на CPU
 # (torch сам выбирает устройство).
@@ -10,6 +11,11 @@ services:
     build: .
     image: ivanmikhnovich/absorbent:dev
     working_dir: /data
+    env_file:
+      # Ключи API из локального .env; без него compose запускается, если
+      # переменные экспортированы в оболочку.
+      - path: .env
+        required: false
     environment:
       - DEEPSEEK_API_KEY
       - MISTRAL_API_KEY
