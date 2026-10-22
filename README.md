@@ -174,16 +174,21 @@ DejaVu (кириллица) — они нужны только PDF. `notes.md` �
 `linux/arm64`, — поэтому распознавание речи идёт нативно и быстро как на
 x86-64 (Linux, Windows), так и на ARM64 (macOS, Apple Silicon).
 
-### Установка из Docker Hub
+### Готовый образ из GHCR
 
 ```bash
-docker pull ivanmikhnovich/absorbent
+docker pull ghcr.io/multiagent-team/absorbent
 ```
 
 Тег без номера — это `latest`; для воспроизводимости берите версионный тег
-(например, `ivanmikhnovich/absorbent:0.1.1`) или дайджест. Образ
+(например, `ghcr.io/multiagent-team/absorbent:0.4.1`) или дайджест. Образ
 многоархитектурный: `linux/amd64` (x86-64, с CUDA для NVIDIA) и `linux/arm64`
-(ARM64, CPU); `docker pull` сам берёт подходящий вариант.
+(ARM64, CPU); `docker pull` сам берёт подходящий вариант. Пакет публичный,
+`docker login` для скачивания не нужен.
+
+Образ собирает workflow `Docker` (`.github/workflows/docker.yml`): пуш тега
+`v*` даёт теги `X.Y.Z` и `latest`, ручной запуск (`workflow_dispatch`) — тег
+`edge`. Если нужного тега ещё нет, соберите образ из исходников (см. ниже).
 
 ### Использование
 
@@ -191,7 +196,7 @@ docker pull ivanmikhnovich/absorbent
 docker run --rm \
   -v "$PWD:/data" -w /data \
   -e DEEPSEEK_API_KEY \
-  ivanmikhnovich/absorbent lecture.mkv
+  ghcr.io/multiagent-team/absorbent lecture.mkv
 ```
 
 Входной файл, `--slides` и `--output-dir` отсчитываются от рабочего каталога
@@ -210,7 +215,7 @@ docker run --rm \
 
 ```bash
 docker run --rm --gpus all -v "$PWD:/data" -w /data \
-  -e DEEPSEEK_API_KEY ivanmikhnovich/absorbent lecture.mkv
+  -e DEEPSEEK_API_KEY ghcr.io/multiagent-team/absorbent lecture.mkv
 ```
 
 **Windows, x86-64.** Docker Desktop с бэкендом WSL2; при карте NVIDIA
@@ -219,7 +224,7 @@ Linux. В PowerShell:
 
 ```powershell
 docker run --rm --gpus all -v ${PWD}:/data -w /data `
-  -e DEEPSEEK_API_KEY ivanmikhnovich/absorbent lecture.mkv
+  -e DEEPSEEK_API_KEY ghcr.io/multiagent-team/absorbent lecture.mkv
 ```
 
 Рабочие файлы держите в файловой системе WSL2: bind-mount с NTFS медленнее.
@@ -230,7 +235,7 @@ x86-64, но GPU контейнеру недоступен, поэтому Whisp
 
 ```bash
 docker run --rm -v "$PWD:/data" -w /data \
-  -e DEEPSEEK_API_KEY ivanmikhnovich/absorbent lecture.mkv
+  -e DEEPSEEK_API_KEY ghcr.io/multiagent-team/absorbent lecture.mkv
 ```
 
 ### Сборка из исходников
@@ -262,7 +267,7 @@ docker run --rm -v "$PWD:/data" -w /data -e DEEPSEEK_API_KEY \
 флаг `--gpus all`:
 
 ```bash
-docker run --rm --gpus all ... ivanmikhnovich/absorbent lecture.mkv
+docker run --rm --gpus all ... ghcr.io/multiagent-team/absorbent lecture.mkv
 ```
 
 На Arch Linux toolkit ставится пакетом `nvidia-container-toolkit` и

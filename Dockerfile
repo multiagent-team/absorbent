@@ -34,7 +34,7 @@ LABEL org.opencontainers.image.title="absorbent" \
       org.opencontainers.image.licenses="GPL-3.0-or-later" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${GIT_REVISION}" \
-      org.opencontainers.image.source="https://github.com/ivan-mikhnovich/absorbent"
+      org.opencontainers.image.source="https://github.com/multiagent-team/absorbent"
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \

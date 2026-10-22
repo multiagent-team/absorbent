@@ -9,7 +9,7 @@
 services:
   absorbent:
     build: .
-    image: ivanmikhnovich/absorbent:dev
+    image: ghcr.io/multiagent-team/absorbent:dev
     working_dir: /data
     env_file:
       # Ключи API из локального .env; без него compose запускается, если

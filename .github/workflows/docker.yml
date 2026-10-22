@@ -1,6 +1,6 @@
 name: Docker
 
-# Сборка и публикация образа Absorbent в Docker Hub.
+# Сборка и публикация образа Absorbent в GitHub Container Registry.
 #
 # Каждая платформа собирается на родном раннере (amd64 — ubuntu-24.04,
 # arm64 — ubuntu-24.04-arm), без эмуляции через QEMU. Образы публикуются по
@@ -12,10 +12,12 @@ on:
   workflow_dispatch:
 
 env:
-  IMAGE: ivanmikhnovich/absorbent
+  IMAGE: ghcr.io/multiagent-team/absorbent
 
 permissions:
   contents: read
+  # Публикация пакета в ghcr.io тем же токеном, что выдаётся workflow.
+  packages: write
 
 concurrency:
   group: docker-${{ github.ref }}
@@ -59,8 +61,9 @@ jobs:
 
       - uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Сборка и публикация по дайджесту
         id: build
@@ -102,8 +105,9 @@ jobs:
 
       - uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Свести манифест
         working-directory: /tmp/digests
