@@ -12,6 +12,17 @@
 имени записи (`<имя>/` рядом с исходником), изображения — в его подкаталог
 `images/`, документ можно сразу отдавать в pandoc.
 
+## Команда
+
+Групповой проект курса «Мультиагентные системы» (НИУ ВШЭ, 2026):
+
+| Участник        | GitHub                                                 |
+|-----------------|--------------------------------------------------------|
+| Иван Михнович   | [@ivan-mikhnovich](https://github.com/ivan-mikhnovich) |
+| Егор Зыбченко   | [@lllezd](https://github.com/lllezd)                   |
+| Георгий Макаров | [@makarov-gv](https://github.com/makarov-gv)           |
+| Сергей Важенин  | [@Stol4nd](https://github.com/Stol4nd)                 |
+
 ## Быстрый старт
 
 ```bash
@@ -99,6 +110,38 @@ vision-модели описываются ещё до конца распозн
 переменных окружения; конкретная модель каждого этапа выбирается флагом
 командной строки.
 
+## LLM: провайдер, модель и её роль
+
+Работа с языковой моделью идёт через облачный API DeepSeek
+(`https://api.deepseek.com`, протокол OpenAI-совместимый). Модель по
+умолчанию — `deepseek-flash`: она указана как `default: true` сразу в двух
+категориях `config.yaml`, `vision` и `llm`, потому что принимает и текст, и
+изображения. В том же файле перечислены альтернативы — `deepseek-v4-pro` у
+DeepSeek и локальные модели через `llama-swap`; модель этапа выбирается
+флагами `--vision-model` и `--llm-model`.
+
+Модель делает три вида работы, и каждый этап — отдельный запрос:
+
+- **выжимка лекции** (`summarize.py`): один текстовый запрос по всему
+  транскрипту — тема, ход изложения, термины и формулы; результат
+  сохраняется в `.absorbent/summary.md` и служит общим контекстом для
+  описания картинок;
+
+- **описание изображений** (`describe.py`): по запросу на каждый ключевой
+  кадр, страницу презентации и фотографию доски; на вход идут сама картинка,
+  таймкод (для кадра) и окно транскрипта ±60 с, а для кадров ещё и выжимка
+  лекции;
+
+- **синтез конспекта** (`synthesize.py`): один текстовый запрос с
+  транскриптом, описаниями изображений и материалами лектора; ответ модели —
+  готовый `notes.md`.
+
+Модель ничего не обучает и не дообучает: это только инференс через API, а
+промежуточные результаты прогона остаются на диске пользователя в
+`.absorbent/`. Распознавание речи к LLM не относится: Whisper работает
+локально, а облачный Voxtral (Mistral) — альтернативный бэкенд STT, не
+языковая модель.
+
 ## Установка из исходников
 
 Нужны [uv](https://docs.astral.sh/uv/), `ffmpeg` и `ffprobe` в PATH (пакет
@@ -110,7 +153,7 @@ Whisper работает на CPU медленнее. Всё дальнейше�
 архитектуры.
 
 ```bash
-git clone git@gitlab.com:murtaught/absorbent.git
+git clone https://github.com/multiagent-team/absorbent.git
 cd absorbent
 uv sync
 ```
@@ -147,6 +190,14 @@ mkdir -p ~/.config/absorbent
 cp config.yaml ~/.config/absorbent/config.yaml
 ```
 
+Ключи API читаются из переменных окружения; для локального запуска их удобно
+держать в `.env` (пример — `.env.example`):
+
+```bash
+cp .env.example .env      # вписать свои ключи
+set -a; . ./.env; set +a
+```
+
 При первом запуске конвейера локальный Whisper скачивает веса модели в кэш
 `~/.cache/whisper` (для `turbo` — файл `large-v3-turbo.pt` примерно на
 1.6 ГБ).
@@ -174,21 +225,38 @@ DejaVu (кириллица) — они нужны только PDF. `notes.md` �
 `linux/arm64`, — поэтому распознавание речи идёт нативно и быстро как на
 x86-64 (Linux, Windows), так и на ARM64 (macOS, Apple Silicon).
 
+### Что нужно заранее
+
+- Docker Engine с плагином Compose v2 (проверка: `docker compose version`);
+  на Windows и macOS — Docker Desktop.
+
+- Ключ DeepSeek API в `DEEPSEEK_API_KEY`: им подписываются запросы моделей по
+  умолчанию. `MISTRAL_API_KEY` нужен, только если выбран облачный Voxtral
+  (`--stt voxtral-transcribe-2`).
+
+- Для ускорения Whisper на карте NVIDIA — драйвер NVIDIA и
+  `nvidia-container-toolkit` на хосте (см. «GPU»); без них конвейер идёт на
+  CPU.
+
+- Запись лекции в каталоге, который монтируется в контейнер: в `compose.yaml`
+  это `./data`.
+
 ### Готовый образ из GHCR
 
 ```bash
-docker pull ghcr.io/multiagent-team/absorbent
+docker pull ghcr.io/multiagent-team/absorbent:edge
 ```
 
-Тег без номера — это `latest`; для воспроизводимости берите версионный тег
+Тег `edge` собирается ручным запуском workflow `Docker`
+(`.github/workflows/docker.yml`); пуш тега `v*` даёт теги `X.Y.Z` и `latest`.
+Пока нужного тега нет (первый запуск workflow ещё не проходил), соберите
+образ из исходников — см. «docker compose» и «Сборка из исходников».
+
+Для воспроизводимости берите версионный тег
 (например, `ghcr.io/multiagent-team/absorbent:0.4.1`) или дайджест. Образ
 многоархитектурный: `linux/amd64` (x86-64, с CUDA для NVIDIA) и `linux/arm64`
-(ARM64, CPU); `docker pull` сам берёт подходящий вариант. Пакет публичный,
-`docker login` для скачивания не нужен.
-
-Образ собирает workflow `Docker` (`.github/workflows/docker.yml`): пуш тега
-`v*` даёт теги `X.Y.Z` и `latest`, ручной запуск (`workflow_dispatch`) — тег
-`edge`. Если нужного тега ещё нет, соберите образ из исходников (см. ниже).
+(ARM64, CPU); `docker pull` сам берёт подходящий вариант. Для скачивания
+публичного пакета `docker login` не нужен.
 
 ### Использование
 
@@ -202,7 +270,8 @@ docker run --rm \
 Входной файл, `--slides` и `--output-dir` отсчитываются от рабочего каталога
 `/data`, поэтому запись и колоду кладут туда томом. Точка входа — `absorbent`;
 рядом доступна команда `absorbent-fmt-tables` (подготовка Markdown к сборке, см.
-«Постпроцессинг»).
+«Постпроцессинг»). Если ключи лежат в `.env`, вместо `-e DEEPSEEK_API_KEY`
+передайте `--env-file .env`.
 
 ### Платформы
 
@@ -279,14 +348,20 @@ docker run --rm --gpus all ... ghcr.io/multiagent-team/absorbent lecture.mkv
 ### docker compose
 
 `compose.yaml` собирает образ, монтирует `./data` в `/data` и
-`$HOME/.config/absorbent` в `/root/.config/absorbent` и открывает GPU:
+`$HOME/.config/absorbent` в `/root/.config/absorbent` и открывает GPU; ключи
+API он берёт из локального `.env`:
 
 ```bash
+cp .env.example .env        # вписать ключи API
 mkdir -p data && cp запись.mkv data/
-DEEPSEEK_API_KEY=... docker compose run --rm absorbent data/запись.mkv
+docker compose build        # один раз: образ около 9 ГБ, несколько минут
+docker compose run --rm absorbent data/запись.mkv
 ```
 
-Для прогона без GPU уберите блок `deploy` из `compose.yaml`.
+`docker compose run` запускает конвейер с записью из `./data`; результат
+появится рядом с ней в том же каталоге. Переменные, экспортированные в
+оболочку, перекрывают значения из `.env`. Для прогона без GPU уберите блок
+`deploy` из `compose.yaml`.
 
 ## Конфигурация
 
