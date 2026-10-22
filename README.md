@@ -233,8 +233,9 @@ x86-64 (Linux, Windows), так и на ARM64 (macOS, Apple Silicon).
 
 ### Что нужно заранее
 
-- Docker Engine с плагином Compose v2 (проверка: `docker compose version`);
-  на Windows и macOS — Docker Desktop.
+- Docker Engine с плагином Compose v2.24 или новее (проверка:
+  `docker compose version`); на Windows и macOS — Docker Desktop. Версия
+  нужна из-за необязательного `env_file` в `compose.yaml`.
 
 - Ключ DeepSeek API в `DEEPSEEK_API_KEY`: им подписываются запросы моделей по
   умолчанию. `MISTRAL_API_KEY` нужен, только если выбран облачный Voxtral
